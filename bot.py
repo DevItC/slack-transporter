@@ -69,11 +69,9 @@ class SlackScraper:
         return ret[::-1]
 
 
-
 def post_message(channel, message, slackclient):
     slackclient.api_call('chat.postMessage', channel = channel,
                         text = '{} [{}]: {}'.format(message['author_name'], message['timestamp'], message['text']))
-
 
 
 def main():
@@ -93,6 +91,7 @@ def main():
         messages = scraper.scrape()
         for message in messages:
             task = q.enqueue_call(func='scraper.post_message', args=('general', message, sc), result_ttl=5000, timeout=3600)
+
 
 
 if __name__=='__main__':
