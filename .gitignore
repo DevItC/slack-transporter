@@ -102,3 +102,4 @@ ENV/
 
 # Config and credentials
 config.yaml
+message-flow.yaml

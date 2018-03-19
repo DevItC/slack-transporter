@@ -8,11 +8,12 @@ from rq.job import Job
 from worker import conn
 import yaml
 from slackclient import SlackClient
+from urllib.parse import urlparse
 
 
 
 class SlackScraper:
-    def __init__(self, username, password):
+    def __init__(self, username, password, channel):
         options = webdriver.ChromeOptions()
         options.add_argument('--headless')
         self.driver = webdriver.Chrome(chrome_options=options)
@@ -23,6 +24,7 @@ class SlackScraper:
         email.send_keys(username)
         self.driver.find_element_by_id('password').send_keys(password)
         email.submit()
+        driver.get('https://{}/messages/messages/{}'.format(urlparse(driver.current_url).netloc, channel))
 
         wait = WebDriverWait(self.driver, 100)
         wait.until(EC.presence_of_element_located((By.CLASS_NAME, 'c-message')))
@@ -69,9 +71,29 @@ class SlackScraper:
         return ret[::-1]
 
 
-def post_message(channel, message, slackclient):
-    slackclient.api_call('chat.postMessage', channel = channel,
-                        text = '{} [{}]: {}'.format(message['author_name'], message['timestamp'], message['text']))
+class SlackTransporter:
+    def __init__(self, username, password, slack_token, message_flow, truncated_words):
+        self.scrapers = []
+        for channel in message_flow['in']:
+            scrapers.append(SlackScraper(username=username, password=password, channel=channel))
+        
+        self.q = Queue(connection=conn)
+        self.sc = SlackClient(slack_token)
+        self.message_flow = message_flow
+
+
+    def post_message(self, channel, message, slackclient):
+        self.sc.api_call('chat.postMessage', channel=self.message_flow['out'],
+                            text='{} [{}]: {}'.format(message['author_name'], message['timestamp'], message['text']))
+
+
+    def run(self):
+        messages = [scraper.scrape() for scraper in self.scrapers]
+        messages = [item for sublist in messages for item in sublist]
+
+        for message in messages:
+            task = self.q.enqueue_call(func=self.post_message, args=(message,), result_ttl=5000, timeout=3600)
+
 
 
 def main():
@@ -82,16 +104,18 @@ def main():
         password = config['CREDS']['PASSWORD']
         slack_token = config['SLACKAPI']['TOKEN']
 
-    scraper = SlackScraper(username=username, password=password)
-    q = Queue(connection=conn)
-    sc = SlackClient(slack_token)
+    with open('message-flow.yaml') as f:
+        config = yaml.load(f)
+        flows = config['message_flow']
+        words = config['truncated_words']
+
+    transporters = []
+    for flow in flows:
+        transporters.append(SlackTransporter(username, password, slack_token, flow, words))
     print('[*] Running...')
 
     while True:
-        messages = scraper.scrape()
-        for message in messages:
-            task = q.enqueue_call(func='scraper.post_message', args=('general', message, sc), result_ttl=5000, timeout=3600)
-
+        result = [t.run() for t in transporters]
 
 
 if __name__=='__main__':
